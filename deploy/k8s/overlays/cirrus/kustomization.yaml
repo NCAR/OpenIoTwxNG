@@ -20,7 +20,7 @@ components:
 images:
   - name: openiotwx-app
     newName: hub.k8s.ucar.edu/openiotwx/openiotwxng # the CIRRUS registry, project "openiotwx"
-    newTag: 5cbcaef # a commit of this repository with the same application code as the image (docs/CIRRUS.md, "Publish an image by hand")
+    newTag: edb67c3 # a commit of this repository with the same application code as the image (docs/CIRRUS.md, "Publish an image by hand")
 
 configMapGenerator:
   - name: openiotwx-config
