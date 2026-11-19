@@ -1,0 +1,91 @@
+# NCAR CIRRUS. This is the folder Argo CD watches (branch "cirrus", path deploy/k8s/overlays/cirrus).
+# Everything here follows what the CIRRUS team told us and what the mesonet application does; the lines still marked
+# CHANGE-ME / CONFIRM are the ones only the cluster can answer (see docs/CIRRUS.md, "Still to confirm").
+# Nothing here is secret: the passwords come from the vault through the ExternalSecrets.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: openiotwx
+
+resources:
+  - ../../base
+
+components:
+  - ../../components/ingress
+  - ../../components/postgres      # our own dedicated database, so we never touch the mesonet one
+  - ../../components/externalsecret
+  # - ../../components/backup      # nightly dump: needs a storage class we know; add once confirmed
+  # - ../../components/networkpolicy
+
+images:
+  - name: openiotwx-app
+    newName: hub.k8s.ucar.edu/openiotwx/openiotwxng # the CIRRUS registry, project "openiotwx"
+    newTag: 5cbcaef # a commit of this repository with the same application code as the image (docs/CIRRUS.md, "Publish an image by hand")
+
+configMapGenerator:
+  - name: openiotwx-config
+    behavior: merge
+    literals:
+      # The public address, and the only address allowed to sign in. CIRRUS names must be under k8s.ucar.edu.
+      - BETTER_AUTH_URL=https://openiotwx.k8s.ucar.edu
+      - SUPPORT_EMAIL=
+      # - CHAT_LLM_ENDPOINT=http://ollama-server.mesonet:11434/v1   # only if the CIRRUS team agrees to share it
+      # - CHAT_LLM_MODEL=qwen2.5:3b
+
+patches:
+  # The public address: CIRRUS uses Traefik, certificates come from cert-manager (the "incommon" issuer) by annotation,
+  # the same as the examples in NCAR/cirrus-examples.
+  - target: { kind: Ingress, name: openiotwx }
+    patch: |-
+      - op: replace
+        path: /spec/ingressClassName
+        value: traefik-public # CONFIRM with: kubectl get ingressclass
+      - op: replace
+        path: /spec/tls/0/hosts/0
+        value: openiotwx.k8s.ucar.edu
+      - op: replace
+        path: /spec/tls/0/secretName
+        value: openiotwx-tls-cert
+      - op: replace
+        path: /spec/rules/0/host
+        value: openiotwx.k8s.ucar.edu
+      - op: add
+        path: /metadata/annotations/cert-manager.io~1cluster-issuer
+        value: incommon
+
+  # ORDER. Argo CD would run a PreSync migration before anything else exists, but our database and its password are part
+  # of this same deployment. So here the steps run in this order: passwords (wave -2, in the component), database
+  # (-1), migration (5), then the app (10). Argo waits for each wave to be healthy before the next.
+  - target: { kind: StatefulSet, name: openiotwx-db }
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: openiotwx-db
+        annotations:
+          argocd.argoproj.io/sync-wave: "-1"
+  - target: { kind: Service, name: openiotwx-db }
+    patch: |-
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: openiotwx-db
+        annotations:
+          argocd.argoproj.io/sync-wave: "-1"
+  - target: { kind: Job, name: openiotwx-migrate }
+    patch: |-
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: openiotwx-migrate
+        annotations:
+          argocd.argoproj.io/hook: Sync
+          argocd.argoproj.io/sync-wave: "5"
+  - target: { kind: Deployment, name: openiotwx }
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: openiotwx
+        annotations:
+          argocd.argoproj.io/sync-wave: "10"

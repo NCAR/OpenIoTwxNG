@@ -11,7 +11,7 @@
 import { spawnSync } from "node:child_process";
 
 const KUBECTL = process.env.KUBECTL || "kubectl";
-const OVERLAYS = ["deploy/k8s/overlays/rehearsal", "deploy/k8s/overlays/example"];
+const OVERLAYS = ["deploy/k8s/overlays/rehearsal", "deploy/k8s/overlays/example", "deploy/k8s/overlays/cirrus"];
 let failed = false;
 const ok = (c, m) => {
   console.log(c ? "ok  " : "FAIL:", m);
@@ -102,7 +102,19 @@ for (const overlay of OVERLAYS) {
     ok(/maxUnavailable: 0/.test(app), `${label}: a rolling update never takes a pod away before its replacement is ready`);
     ok(/name: DATABASE_URL\n\s+valueFrom:\n\s+secretKeyRef:/.test(app) && /name: BETTER_AUTH_SECRET\n\s+valueFrom:\n\s+secretKeyRef:/.test(app), `${label}: the database address and the session secret come from the Secret`);
   } else ok(false, `${label}: the app Deployment is there`);
-  ok(docs.some((d) => kindOf(d) === "Job" && /argocd.argoproj.io\/hook: PreSync/.test(d)), `${label}: migrations run as a PreSync job`);
+  // Migrations run as an Argo hook. Normally PreSync. An overlay that ships its own database and passwords instead runs
+  // them as a Sync hook in a later wave than those, and the app must come after the migration.
+  const migrate = docs.find((d) => kindOf(d) === "Job" && nameOf(d) === "openiotwx-migrate");
+  const wave = (d) => Number((d?.match(/argocd.argoproj.io\/sync-wave: "?(-?\d+)"?/) ?? [])[1] ?? 0);
+  if (migrate && /argocd.argoproj.io\/hook: Sync/.test(migrate)) {
+    const dbs = docs.filter((d) => kindOf(d) === "StatefulSet" && /component: db/.test(d));
+    const secrets = docs.filter((d) => kindOf(d) === "ExternalSecret");
+    ok(dbs.length > 0 && dbs.every((d) => wave(d) < wave(migrate)), `${label}: the migration runs after the database is up`);
+    ok(secrets.length > 0 && secrets.every((d) => wave(d) < wave(dbs[0])), `${label}: the passwords exist before the database starts`);
+    ok(app && wave(app) > wave(migrate), `${label}: the app starts after the migration`);
+  } else {
+    ok(Boolean(migrate) && /argocd.argoproj.io\/hook: PreSync/.test(migrate), `${label}: migrations run as a PreSync job`);
+  }
 }
 
 console.log(failed ? "MANIFEST CHECK FAILED" : "Manifest check passed");

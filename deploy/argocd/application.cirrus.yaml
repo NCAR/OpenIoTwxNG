@@ -1,0 +1,29 @@
+# The Argo CD Application for CIRRUS, ready to hand to the CIRRUS team (they create it; we do not have access to).
+# It follows the mesonet one: a branch named "cirrus" of our repository, one folder, one namespace, same cluster.
+# Nothing here is secret.
+#
+# Before it works:
+#   - the branch "cirrus" must exist in the repository (it is where we publish what CIRRUS should run),
+#   - the repository is private, so Argo CD needs read access to it (a deploy key or a token that they add),
+#   - "project" must be the Argo CD project they give us.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: openiotwx
+  namespace: argocd # CONFIRM: where their Argo CD keeps Applications
+spec:
+  project: openiotwx # CONFIRM: the Argo CD project they give us
+  source:
+    repoURL: https://github.com/NCAR/OpenIoTwxNG.git
+    targetRevision: cirrus
+    path: deploy/k8s/overlays/cirrus
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: openiotwx
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false # the namespace is made for us
+      - PruneLast=true

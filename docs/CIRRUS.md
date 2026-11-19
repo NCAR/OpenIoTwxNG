@@ -24,14 +24,54 @@ The cluster pulls from git (Argo CD), and nothing pushes into the cluster. Chang
 | `deploy/k8s/base/` | Deployment, Service, migration Job, PodDisruptionBudget, ServiceAccount. |
 | `deploy/k8s/components/` | Optional pieces: `ingress`, `postgres` (a bundled database), `backup` (nightly dump), `networkpolicy`. |
 | `deploy/k8s/overlays/example/` | The starting point for a real cluster. Copy it and change every `CHANGE-ME`. |
+| `deploy/k8s/overlays/cirrus/` | The CIRRUS deployment (what Argo CD watches). |
 | `deploy/k8s/overlays/rehearsal/` | The local rehearsal. |
 | `deploy/k8s/secret.example.yaml` | The Secret the app reads (a template; real values never go in git). |
 | `deploy/argocd/application.example.yaml` | An Argo CD Application pointing at an overlay. |
+| `deploy/argocd/application.cirrus.yaml` | The Application for CIRRUS, to hand to the CIRRUS team. |
 | `.github/workflows/ci.yml` | The checks and the image build. |
 | `scripts/check-manifests.mjs` | Fails the build if the Kubernetes files weaken (root user, writable filesystem, floating image tag, a Secret in git, ...). |
 | `deploy/k8s/rehearse.mjs` | The full local rehearsal. |
 
 The Kubernetes files use Kustomize (built into `kubectl`, and native to Argo CD), so no other tool is needed. If the platform team prefers a Helm chart, the same files convert directly.
+
+## What the CIRRUS team told us (November 2026)
+
+These answers are from the CIRRUS team and from the mesonet application they already run (`NCAR/mesonet-siparcs25`, branch `cirrus`, folder `cloud/helm/`). `deploy/k8s/overlays/cirrus/` is built from them.
+
+| Topic | Answer | Where it is in the files |
+| --- | --- | --- |
+| Where the files live | Argo CD can watch any git repository and branch. We use branch `cirrus` of this repository, folder `deploy/k8s/overlays/cirrus`. The CIRRUS team adds the repository and branch on their side. | `deploy/argocd/application.cirrus.yaml` |
+| Namespace | Our own: `openiotwx` (added next to `mesonet`). | overlay `namespace:` |
+| Public address | The app can be public with no VPN. Names can only be under `k8s.ucar.edu`: `openiotwx.k8s.ucar.edu`. Another name under `ucar.edu` needs an IT ticket for an alias. | overlay ingress patch, `BETTER_AUTH_URL` |
+| HTTPS certificates | Automatic, by an annotation on the Ingress (`cert-manager.io/cluster-issuer: incommon`). The class is Traefik (`traefik-public` in their example). | overlay ingress patch |
+| Image registry | The CIRRUS registry, `hub.k8s.ucar.edu`, project `openiotwx` (we are an admin of it). | overlay `images:` |
+| Image builds | GitHub Actions is switched off for the NCAR organisation. A ticket to ithelp asks to allow `OpenIoTwxNG` (contact: Joel Daves), or CIRRUS-hosted runners can be used. Until then an image is built and pushed by hand (below). | `.github/workflows/ci.yml` |
+| Database | The mesonet Postgres could be shared; we chose our own dedicated one, so we never touch their data. | `components/postgres` |
+| Secrets | Not typed into the cluster. They come from the vault (OpenBao, `bao.k8s.ucar.edu`, sign in with OIDC) through an `ExternalSecret`, as mesonet does with `iotwx/cirrus`. We ask for our own path (for example `openiotwx/cirrus`) and a read-only SecretStore in our namespace. | `components/externalsecret` |
+| Sign-in for people | Their preference is Entra ID (OIDC). Not built; administrators use `scripts/make-admin.mjs`. | later |
+| Review before going live | Nothing specific. Names and the URL must not clash with mesonet. A failed first deployment breaks nothing and tells them what went wrong. | all names start with `openiotwx` |
+
+**Order matters.** A dedicated database means the passwords, the database and the migration are all part of this deployment. So the overlay runs them in order (Argo CD "sync waves"): passwords (-2), database (-1), migration (5), then the app (10). `scripts/check-manifests.mjs` checks this order.
+
+### Still to confirm
+
+- The ingress class name. In their example it is `traefik-<visibility>`; check with `kubectl get ingressclass`.
+- The SecretStore name and our vault path (`CHANGE-ME` in `components/externalsecret/externalsecret.yaml`).
+- The Argo CD project name, and read access for Argo CD to this private repository (`application.cirrus.yaml`).
+- The storage class for the database volume (the cluster default is used until told otherwise), and whether to turn on the nightly `backup`.
+- Whether the registry project is public, or the namespace needs a pull secret.
+- Whether `ollama-server` may be used by the chat.
+
+### Publish an image by hand (until Actions is allowed)
+
+```
+docker login hub.k8s.ucar.edu -u <your-ucar-email>      # the password is the "CLI secret" from your Harbor profile
+docker build -t hub.k8s.ucar.edu/openiotwx/openiotwxng:<commit> .
+docker push hub.k8s.ucar.edu/openiotwx/openiotwxng:<commit>
+```
+
+Use the short git commit (`git rev-parse --short HEAD`) as the tag, then put the same tag in `newTag` of the overlay. Never use `latest`.
 
 ## First deployment, step by step
 
@@ -58,7 +98,7 @@ The Kubernetes files use Kustomize (built into `kubectl`, and native to Argo CD)
 
 ## What we assumed (change these when the answers are known)
 
-Each assumption is one setting. Nothing here is hard-wired.
+Each assumption is one setting. Nothing here is hard-wired. (The registry, Argo CD, hostname and class, namespace, database and secrets rows were written before the CIRRUS team answered; the section above, "What the CIRRUS team told us", replaces them.)
 
 | We assumed | Because we did not know | Where to change it |
 | --- | --- | --- |
