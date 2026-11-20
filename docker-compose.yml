@@ -117,7 +117,8 @@ services:
       MQTT_USER: bridge
       MQTT_PASSWORD: ${MQTT_BRIDGE_PASSWORD:-}
       APP_URL: http://proxy
-      INGEST_BRIDGE_TOKEN: ${INGEST_BRIDGE_TOKEN:?set INGEST_BRIDGE_TOKEN in .env to use MQTT}
+      # Only needed with --profile mqtt. The bridge itself refuses to start when this is empty.
+      INGEST_BRIDGE_TOKEN: ${INGEST_BRIDGE_TOKEN:-}
     depends_on:
       - mosquitto
       - proxy
@@ -132,7 +133,8 @@ services:
     command: ["node", "scripts/gdex-release.mjs"]
     environment:
       APP_URL: http://proxy
-      GDEX_RELEASE_TOKEN: ${GDEX_RELEASE_TOKEN:?set GDEX_RELEASE_TOKEN in .env to use the GDEX scheduler}
+      # Only needed with --profile gdex. The scheduler itself refuses to start when this is empty.
+      GDEX_RELEASE_TOKEN: ${GDEX_RELEASE_TOKEN:-}
       GDEX_CHECK_HOURS: ${GDEX_CHECK_HOURS:-12}
     depends_on:
       - proxy
