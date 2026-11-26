@@ -4,8 +4,13 @@
 #
 # Before it works:
 #   - the branch "cirrus" must exist in the repository (it is where we publish what CIRRUS should run),
-#   - the repository is private, so Argo CD needs read access to it (a deploy key or a token that they add),
+#   - the repository is public, so Argo CD needs no key or token to read it,
 #   - "project" must be the Argo CD project they give us.
+#
+# The folder is "cirrus-direct": the same as "cirrus" without the three vault objects, because the two Secrets
+# (openiotwx, openiotwx-db) were created by hand in the namespace. Those Secrets are not in git, so Argo CD leaves them
+# alone (it only prunes what it created). When a vault token for our path exists, change the path to
+# deploy/k8s/overlays/cirrus.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -16,7 +21,7 @@ spec:
   source:
     repoURL: https://github.com/NCAR/OpenIoTwxNG.git
     targetRevision: cirrus
-    path: deploy/k8s/overlays/cirrus
+    path: deploy/k8s/overlays/cirrus-direct
   destination:
     server: https://kubernetes.default.svc
     namespace: openiotwx
