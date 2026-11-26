@@ -39,7 +39,7 @@ patches:
     patch: |-
       - op: replace
         path: /spec/ingressClassName
-        value: traefik-public # CONFIRM with: kubectl get ingressclass
+        value: traefik-external # NCAR/cirrus-examples: "traefik-<visibility>", visibility is "external" (public) or "internal" (UCAR network/VPN)
       - op: replace
         path: /spec/tls/0/hosts/0
         value: openiotwx.k8s.ucar.edu
@@ -64,6 +64,13 @@ patches:
         name: openiotwx-db
         annotations:
           argocd.argoproj.io/sync-wave: "-1"
+  # The database volume: CIRRUS's Ceph block storage (ReadWriteOnce), the class NCAR/cirrus-examples and the mesonet
+  # database use. A StatefulSet cannot change this after it is first created, so it is named here from the start.
+  - target: { kind: StatefulSet, name: openiotwx-db }
+    patch: |-
+      - op: add
+        path: /spec/volumeClaimTemplates/0/spec/storageClassName
+        value: ceph-kubepv
   - target: { kind: Service, name: openiotwx-db }
     patch: |-
       apiVersion: v1

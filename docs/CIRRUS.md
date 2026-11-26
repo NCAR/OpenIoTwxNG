@@ -44,7 +44,7 @@ These answers are from the CIRRUS team and from the mesonet application they alr
 | Where the files live | Argo CD can watch any git repository and branch. We use branch `cirrus` of this repository, folder `deploy/k8s/overlays/cirrus`. The CIRRUS team adds the repository and branch on their side. | `deploy/argocd/application.cirrus.yaml` |
 | Namespace | Our own: `openiotwx` (added next to `mesonet`). | overlay `namespace:` |
 | Public address | The app can be public with no VPN. Names can only be under `k8s.ucar.edu`: `openiotwx.k8s.ucar.edu`. Another name under `ucar.edu` needs an IT ticket for an alias. | overlay ingress patch, `BETTER_AUTH_URL` |
-| HTTPS certificates | Automatic, by an annotation on the Ingress (`cert-manager.io/cluster-issuer: incommon`). The class is Traefik (`traefik-public` in their example). | overlay ingress patch |
+| HTTPS certificates | Automatic, by an annotation on the Ingress (`cert-manager.io/cluster-issuer: incommon`). The class is Traefik: `traefik-external` (public) or `traefik-internal` (UCAR network or VPN), as in NCAR/cirrus-examples. We use `traefik-external`. | overlay ingress patch |
 | Image registry | The CIRRUS registry, `hub.k8s.ucar.edu`, project `openiotwx` (we are an admin of it). | overlay `images:` |
 | Image builds | GitHub Actions is switched off for the NCAR organisation. A ticket to ithelp asks to allow `OpenIoTwxNG` (contact: Joel Daves), or CIRRUS-hosted runners can be used. Until then an image is built and pushed by hand (below). | `.github/workflows/ci.yml` |
 | Database | The mesonet Postgres could be shared; we chose our own dedicated one, so we never touch their data. | `components/postgres` |
@@ -121,3 +121,35 @@ Each assumption is one setting. Nothing here is hard-wired. (The registry, Argo 
 - Email verification and password reset (they need an outgoing mail server).
 - Single sign-on for administrators.
 - Metrics and alerting. The pods log to standard output and answer `/api/health`; wire those into the cluster's monitoring.
+
+## Deploy it ourselves (kubectl, no vault, no Argo CD)
+
+Used for the first deployment on `nwc1`. The account may create secrets, volumes, jobs and ingresses in its own namespace, so
+everything in `deploy/k8s/overlays/cirrus` can be applied by hand, except the three vault objects. The overlay
+`deploy/k8s/overlays/cirrus-direct` is that overlay with those three objects removed.
+
+1. Sign in: `$env:KUBECONFIG = "$HOME\.kube\cirrus-config"`, kubelogin on the PATH, `kubectl config use-context nwc1` (VPN needed).
+2. Create the two Secrets (the database password must be the same in both; keep a copy somewhere safe, outside git):
+
+   ```
+   kubectl -n openiotwx create secret generic openiotwx-db --from-literal=POSTGRES_PASSWORD='<password>'
+   kubectl -n openiotwx create secret generic openiotwx --from-literal=BETTER_AUTH_SECRET='<32+ characters>' \
+     --from-literal=DATABASE_URL='postgres://iotwx:<password>@openiotwx-db:5432/iotwx'
+   ```
+
+3. Check, then apply: `kubectl apply -k deploy/k8s/overlays/cirrus-direct --dry-run=server`, then the same without `--dry-run`.
+4. Watch: `kubectl -n openiotwx get pods`, `kubectl -n openiotwx logs job/openiotwx-migrate`, then `/api/health` on the public address.
+5. First administrator (after that person has signed up on the site):
+   `kubectl -n openiotwx exec deploy/openiotwx -- node scripts/make-admin.mjs person@example.org superadmin`.
+
+Lessons from the first run on CIRRUS:
+
+- **Image names must be complete.** The nodes refuse short names such as `timescale/timescaledb` ("short name mode is enforcing")
+  and the pod stays in `ImageInspectError`. Use `docker.io/timescale/timescaledb:...`.
+- **A StatefulSet pod that never became ready is not replaced by an update.** After fixing the template, delete that pod.
+- **The migration Job gives up after its retries.** If the database was late, delete the Job and apply again.
+- **Storage:** `ceph-kubepv` (block storage, one pod at a time). A StatefulSet cannot change it later.
+- **The hostname needs a DNS record** pointing at the Traefik address that `kubectl -n openiotwx get ingress` shows. The certificate is
+  issued without it, but nobody can reach the site by name until the record exists.
+- **Passwords are only in the cluster.** If the Secret `openiotwx-db` is deleted, the password of the existing database is lost;
+  keep a copy.
